@@ -27,6 +27,8 @@ _DEFAULTS: dict[str, Any] = {
     "proxy_static": "",
     "team": {"url": "", "key": ""},
     "sync":  {"url": "", "key": ""},
+    # Set to false to skip the post-registration Codex OAuth token step.
+    "enable_oauth": True,
 }
 
 

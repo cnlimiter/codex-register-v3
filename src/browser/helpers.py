@@ -104,7 +104,21 @@ async def wait_any_element(
     return None
 
 
-# ── Button finding ────────────────────────────────────────────────────────
+async def fill_spinbutton(page: Page, index: int, target: int) -> None:
+    """
+    Locate the spinbutton at *index* (0-based) in the DOM and adjust it to
+    *target* value using ArrowUp/ArrowDown keys.
+
+    This is a convenience wrapper over set_spinbutton() that selects the
+    nth spinbutton by index rather than requiring a pre-built Locator.
+    Called by oauth._fill_about_you_js() during the post-registration
+    OAuth flow's about-you profile form filling.
+    """
+    locator = page.locator("[role='spinbutton']").nth(index)
+    await set_spinbutton(page, locator, target)
+
+
+# ── CLI dry-run ────────────────────────────────────────────────────────────
 
 async def find_button_by_texts(page: Page, texts: list[str]) -> Optional[Locator]:
     """

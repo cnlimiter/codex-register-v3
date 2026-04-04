@@ -46,33 +46,41 @@ async def upsert(account: dict) -> None:
         return
 
     row = {
-        "email":      email,
-        "password":   account.get("password", ""),
-        "status":     account.get("status", "created"),
-        "first_name": account.get("firstName", account.get("first_name", "")),
-        "last_name":  account.get("lastName",  account.get("last_name",  "")),
-        "provider":   account.get("provider", ""),
-        "proxy":      account.get("proxy", ""),
-        "created_at": account.get("createdAt", account.get("created_at", _now_iso())),
-        "raw_json":   json.dumps(account, ensure_ascii=False),
+        "email":        email,
+        "password":     account.get("password", ""),
+        "status":       account.get("status", "created"),
+        "first_name":   account.get("firstName", account.get("first_name", "")),
+        "last_name":    account.get("lastName",  account.get("last_name",  "")),
+        "provider":     account.get("provider", ""),
+        "proxy":        account.get("proxy", ""),
+        "created_at":   account.get("createdAt", account.get("created_at", _now_iso())),
+        "raw_json":     json.dumps(account, ensure_ascii=False),
+        "access_token":  account.get("access_token", ""),
+        "refresh_token": account.get("refresh_token", ""),
+        "account_id":    account.get("account_id", ""),
     }
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO accounts
-                (email, password, status, first_name, last_name, provider, proxy, created_at, raw_json)
+                (email, password, status, first_name, last_name, provider, proxy,
+                 created_at, raw_json, access_token, refresh_token, account_id)
             VALUES
-                (:email, :password, :status, :first_name, :last_name, :provider, :proxy, :created_at, :raw_json)
+                (:email, :password, :status, :first_name, :last_name, :provider, :proxy,
+                 :created_at, :raw_json, :access_token, :refresh_token, :account_id)
             ON CONFLICT(email) DO UPDATE SET
-                password   = excluded.password,
-                status     = excluded.status,
-                first_name = excluded.first_name,
-                last_name  = excluded.last_name,
-                provider   = excluded.provider,
-                proxy      = excluded.proxy,
-                created_at = excluded.created_at,
-                raw_json   = excluded.raw_json
+                password      = excluded.password,
+                status        = excluded.status,
+                first_name    = excluded.first_name,
+                last_name     = excluded.last_name,
+                provider      = excluded.provider,
+                proxy         = excluded.proxy,
+                created_at    = excluded.created_at,
+                raw_json      = excluded.raw_json,
+                access_token  = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                account_id    = excluded.account_id
             """,
             row,
         )
@@ -137,7 +145,11 @@ async def export_json(path: Path) -> int:
 
 async def export_csv(path: Path) -> int:
     rows = await list_all()
-    fieldnames = ["email", "password", "status", "first_name", "last_name", "provider", "proxy", "created_at"]
+    fieldnames = [
+        "email", "password", "status", "first_name", "last_name",
+        "provider", "proxy", "created_at", "account_id",
+        "access_token", "refresh_token",
+    ]
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()

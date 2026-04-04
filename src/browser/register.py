@@ -209,6 +209,41 @@ async def register_one(
                 await _state_machine(task_id, page, account, mail_client)
                 account["status"] = "注册完成"
                 logger.success(f"[{task_id}] ✅ Done: {email}")
+
+                # ── Post-registration: Codex OAuth token acquisition ──────────
+                # The browser still holds valid auth.openai.com cookies from the
+                # completed registration session.  Re-using the same page means
+                # Auth0 can skip re-authentication and go straight to the PKCE
+                # consent / workspace-select step.
+                if cfg.get("enable_oauth", True):
+                    try:
+                        from src.browser.oauth import acquire_tokens_via_browser
+                        token = await acquire_tokens_via_browser(
+                            page=page,
+                            email=email,
+                            password=password,
+                            first_name=first_name,
+                            last_name=last_name,
+                            birthday=birthday,
+                            proxy=proxy,
+                        )
+                        if token:
+                            account.update(token.to_dict())
+                            logger.success(
+                                f"[{task_id}] 🔑 OAuth tokens acquired — "
+                                f"account_id={token.account_id} "
+                                f"expires={token.expires_at}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[{task_id}] OAuth step returned None — "
+                                "registration result saved without tokens"
+                            )
+                    except Exception as _oe:
+                        logger.warning(
+                            f"[{task_id}] OAuth step error (non-fatal): {_oe}"
+                        )
+
                 return account
 
             except RegistrationError as exc:
