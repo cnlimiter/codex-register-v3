@@ -29,6 +29,27 @@ _DEFAULTS: dict[str, Any] = {
     "sync":  {"url": "", "key": ""},
     # Set to false to skip the post-registration Codex OAuth token step.
     "enable_oauth": True,
+    # ── Per-stage timeout configuration (all values in seconds) ──────────────
+    # Override any value in config.yaml under the `timeouts:` key.
+    "timeouts": {
+        # Registration flow
+        "page_load":            30,   # page.goto() for login / retry navigations
+        "auth0_redirect":       8,    # wait_for_url to auth.openai.com after landing
+        "email_input":          15,   # wait for email input on signup page
+        "password_input":       60,   # wait for password input after email submit
+        "otp_input":            60,   # wait for OTP input boxes after password submit
+        "otp_code":             180,  # poll mail inbox for the 6-digit OTP code
+        "profile_detect":       15,   # wait for firstName input (profile page detection)
+        "profile_field":        5,    # wait for each name/date field inside profile page
+        "complete_redirect":    20,   # wait_for_url to chatgpt.com (registration done)
+        # OAuth flow
+        "oauth_navigate":       20,   # page.goto() to /oauth/authorize
+        "oauth_flow_element":   8,    # wait_any_element for consent/continue button per attempt
+        "oauth_login_email":    8,    # wait for email input on OAuth re-login page
+        "oauth_login_password": 10,   # wait for password input on OAuth re-login page
+        "oauth_token_exchange": 30,   # httpx timeout for /oauth/token POST
+        "oauth_total":          45,   # hard deadline for the entire OAuth flow
+    },
 }
 
 

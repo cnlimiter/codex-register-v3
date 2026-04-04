@@ -53,7 +53,8 @@ LOGIN_URL   = "https://chatgpt.com/auth/login"
 AUTH0_HOST  = "auth.openai.com"
 
 MAX_RETRIES  = 5
-CODE_TIMEOUT = 180   # seconds to poll for OTP e-mail
+# Fallback timeout constants — overridden at runtime by cfg["timeouts"] values.
+CODE_TIMEOUT = 180   # seconds to poll for OTP e-mail (default; see timeouts.otp_code)
 
 # Email selectors — mirrors tool.js GOTO_SIGNUP + FILL_EMAIL order
 _EMAIL_SELECTORS = [
@@ -180,6 +181,7 @@ async def register_one(
     engine    = cfg.get("engine", "playwright")
     headless  = cfg.get("headless", True)
     slow_mo   = cfg.get("slow_mo", 0)
+    timeouts  = cfg.get("timeouts", {})
     if not headless and slow_mo == 0:
         slow_mo = 80
 
@@ -206,7 +208,7 @@ async def register_one(
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 logger.info(f"[{task_id}] Attempt {attempt}/{MAX_RETRIES} — {email}")
-                await _state_machine(task_id, page, account, mail_client)
+                await _state_machine(task_id, page, account, mail_client, timeouts)
                 account["status"] = "注册完成"
                 logger.success(f"[{task_id}] ✅ Done: {email}")
 
@@ -226,6 +228,7 @@ async def register_one(
                             last_name=last_name,
                             birthday=birthday,
                             proxy=proxy,
+                            timeouts=timeouts,
                         )
                         if token:
                             account.update(token.to_dict())
@@ -251,7 +254,8 @@ async def register_one(
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(3 * attempt)
                     try:
-                        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+                        await page.goto(LOGIN_URL, wait_until="domcontentloaded",
+                                        timeout=int(timeouts.get("page_load", 30) * 1000))
                     except Exception:
                         pass
 
@@ -260,7 +264,8 @@ async def register_one(
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(5)
                     try:
-                        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+                        await page.goto(LOGIN_URL, wait_until="domcontentloaded",
+                                        timeout=int(timeouts.get("page_load", 30) * 1000))
                     except Exception:
                         pass
 
@@ -275,6 +280,7 @@ async def _state_machine(
     page: Page,
     account: dict,
     mail_client: MailClient,
+    timeouts: dict,
 ) -> None:
     """
     Sequentially executes the 7-state flow matching tool.js _0x548_inner:
@@ -285,11 +291,13 @@ async def _state_machine(
     # tool.js: window.location.href = 'https://chatgpt.com/auth/login'
     # NextAuth 302-redirects → auth.openai.com Universal Login
     logger.info(f"[{task_id}] GOTO_SIGNUP → {LOGIN_URL}")
-    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded",
+                    timeout=int(timeouts.get("page_load", 30) * 1000))
 
     # Wait for Auth0 redirect (usually < 5 s)
     try:
-        await page.wait_for_url(f"**{AUTH0_HOST}**", timeout=8_000)
+        await page.wait_for_url(f"**{AUTH0_HOST}**",
+                                timeout=int(timeouts.get("auth0_redirect", 8) * 1000))
     except Exception:
         pass
 
@@ -336,7 +344,10 @@ async def _state_machine(
     # ── STATE: FILL_EMAIL ─────────────────────────────────────────────
     # tool.js: _0x1bf(email_selectors, 0x3a98) — wait up to 15 s
     logger.info(f"[{task_id}] FILL_EMAIL — URL={page.url}")
-    email_result = await wait_any_element(page, _EMAIL_SELECTORS, timeout_ms=15_000)
+    email_result = await wait_any_element(
+        page, _EMAIL_SELECTORS,
+        timeout_ms=int(timeouts.get("email_input", 15) * 1000),
+    )
     if not email_result:
         try:
             snippet = (await page.content())[:600]
@@ -379,8 +390,11 @@ async def _state_machine(
 
     # ── STATE: FILL_PASSWORD ──────────────────────────────────────────
     # tool.js: _0x98d(d) — polls up to 60 s for password input
-    logger.info(f"[{task_id}] FILL_PASSWORD — waiting for password input (≤60 s)")
-    pw_result = await wait_any_element(page, _PASSWORD_SELECTORS, timeout_ms=60_000)
+    logger.info(f"[{task_id}] FILL_PASSWORD — waiting for password input (≤{timeouts.get('password_input', 60)} s)")
+    pw_result = await wait_any_element(
+        page, _PASSWORD_SELECTORS,
+        timeout_ms=int(timeouts.get("password_input", 60) * 1000),
+    )
     if not pw_result:
         raise RegistrationError(
             f"Password input not found after email submit. URL={page.url}"
@@ -423,8 +437,10 @@ async def _state_machine(
     # ── STATE: WAIT_CODE ──────────────────────────────────────────────
     # tool.js: _0x98d wait loop — checks for input[maxlength="1"] or
     # autocomplete="one-time-code" every 1 s, up to 60 s
-    logger.info(f"[{task_id}] WAIT_CODE — waiting for OTP inputs (≤60 s)")
-    otp_appeared = await _wait_for_otp_inputs(page, timeout_ms=60_000)
+    logger.info(f"[{task_id}] WAIT_CODE — waiting for OTP inputs (≤{timeouts.get('otp_input', 60)} s)")
+    otp_appeared = await _wait_for_otp_inputs(
+        page, timeout_ms=int(timeouts.get("otp_input", 60) * 1000),
+    )
     if not otp_appeared:
         raise RegistrationError(
             f"OTP input did not appear after password submit. URL={page.url}"
@@ -434,7 +450,10 @@ async def _state_machine(
 
     # tool.js: _0xa9e — poll gptmail every 3 s up to 60 iterations
     await jitter_sleep(2.0, 0.5)  # _0x1ae(0x7d0)
-    code = await mail_client.poll_code(account["email"], timeout=CODE_TIMEOUT)
+    code = await mail_client.poll_code(
+        account["email"],
+        timeout=int(timeouts.get("otp_code", CODE_TIMEOUT)),
+    )
     if not code:
         raise RegistrationError("OTP code not received within timeout")
 
@@ -458,10 +477,13 @@ async def _state_machine(
     # ── STATE: FILL_PROFILE ───────────────────────────────────────────
     # tool.js: _0xbaf waits up to 60 s for firstName input; then calls _0xcc0(d)
     logger.info(f"[{task_id}] Checking for FILL_PROFILE page")
-    fname_result = await wait_any_element(page, _FNAME_SELECTORS, timeout_ms=15_000)
+    fname_result = await wait_any_element(
+        page, _FNAME_SELECTORS,
+        timeout_ms=int(timeouts.get("profile_detect", 15) * 1000),
+    )
     if fname_result:
         logger.info(f"[{task_id}] FILL_PROFILE — URL={page.url}")
-        await _fill_profile(task_id, page, account)
+        await _fill_profile(task_id, page, account, timeouts)
     else:
         logger.debug(f"[{task_id}] No profile page — registration may be complete already")
 
@@ -469,7 +491,8 @@ async def _state_machine(
     # tool.js: !u.includes('auth.openai.com') && !u.includes('/auth/')
     logger.info(f"[{task_id}] COMPLETE — waiting for chatgpt.com redirect")
     try:
-        await page.wait_for_url("**/chatgpt.com/**", timeout=20_000)
+        await page.wait_for_url("**/chatgpt.com/**",
+                                timeout=int(timeouts.get("complete_redirect", 20) * 1000))
     except Exception:
         pass
 
@@ -569,7 +592,7 @@ async def _fill_otp(page: Page, code: str) -> None:
                 break
 
 
-async def _fill_profile(task_id: str, page: Page, account: dict) -> None:
+async def _fill_profile(task_id: str, page: Page, account: dict, timeouts: dict) -> None:
     """
     Fill name + birthday spinbuttons.
     Mirrors tool.js _0xcc0(d):
@@ -578,10 +601,11 @@ async def _fill_profile(task_id: str, page: Page, account: dict) -> None:
       • querySelector 'button[type="submit"]' → click
     """
     bd = account["birthday"]
+    _pf_ms = int(timeouts.get("profile_field", 5) * 1000)
 
     # Name fields
-    fname_result = await wait_any_element(page, _FNAME_SELECTORS, timeout_ms=5_000)
-    lname_result = await wait_any_element(page, _LNAME_SELECTORS, timeout_ms=5_000)
+    fname_result = await wait_any_element(page, _FNAME_SELECTORS, timeout_ms=_pf_ms)
+    lname_result = await wait_any_element(page, _LNAME_SELECTORS, timeout_ms=_pf_ms)
 
     if fname_result and lname_result:
         f_sel, _ = fname_result
@@ -593,7 +617,7 @@ async def _fill_profile(task_id: str, page: Page, account: dict) -> None:
         name_result = await wait_any_element(
             page,
             ["input[name='name']", "input[name='fullName']", "input[id*='name']"],
-            timeout_ms=3_000,
+            timeout_ms=max(3_000, _pf_ms // 2),
         )
         if name_result:
             n_sel, _ = name_result
@@ -623,7 +647,7 @@ async def _fill_profile(task_id: str, page: Page, account: dict) -> None:
         date_result = await wait_any_element(
             page,
             ["input[type='date']", "input[name*='birth']", "input[id*='birth']"],
-            timeout_ms=3_000,
+            timeout_ms=max(3_000, _pf_ms // 2),
         )
         if date_result:
             d_sel, _ = date_result

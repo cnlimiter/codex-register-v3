@@ -159,6 +159,7 @@ async def acquire_tokens_via_browser(
     birthday: Optional[dict] = None,
     proxy: Optional[str] = None,
     timeout: float = 45.0,
+    timeouts: Optional[dict] = None,
 ) -> Optional[TokenResult]:
     """
     Use the browser's existing authenticated session to perform a Codex PKCE
@@ -175,11 +176,19 @@ async def acquire_tokens_via_browser(
         last_name:  Last name — used to fill about-you form if encountered.
         birthday:   Dict {year, month, day} — used to fill about-you form.
         proxy:      Optional HTTP proxy URL for the token-exchange request.
-        timeout:    Seconds to wait for the authorization code callback.
+        timeout:    Hard deadline (seconds) for the entire OAuth flow.
+                    Overridden by ``timeouts["oauth_total"]`` when provided.
+        timeouts:   Per-stage timeout dict (from cfg["timeouts"]).  All values
+                    are in seconds.  Keys used here:
+                      oauth_total, oauth_navigate, oauth_login_email,
+                      oauth_login_password, oauth_flow_element,
+                      oauth_token_exchange.
 
     Returns:
         ``TokenResult`` on success, ``None`` on any failure (always non-fatal).
     """
+    _to   = timeouts or {}
+    _total = _to.get("oauth_total", timeout)
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(24)
 
@@ -212,19 +221,15 @@ async def acquire_tokens_via_browser(
 
     await page.route("http://localhost:1455/**", _intercept)
 
-    try:
+    async def _run_flow() -> Optional[TokenResult]:
         logger.info(f"[oauth] Starting PKCE OAuth flow for {email}")
 
         # ── Navigate to OAuth authorize endpoint ─────────────────────────────
-        # The browser's auth.openai.com cookies let Auth0 skip re-authentication
-        # and go straight to the consent / workspace-selection page.
         try:
-            await page.goto(authorize_url, wait_until="commit", timeout=20_000)
+            await page.goto(authorize_url, wait_until="commit",
+                            timeout=int(_to.get("oauth_navigate", 20) * 1000))
         except Exception as e:
             err = str(e)
-            # ERR_CONNECTION_REFUSED / ERR_ABORTED are expected when the browser
-            # tries to load the localhost callback URL — the route intercept aborts
-            # the request, which raises a navigation exception in Playwright.
             if any(s in err for s in ("ERR_CONNECTION_REFUSED", "ERR_ABORTED",
                                        "net::ERR", "NS_BINDING_ABORTED")):
                 logger.debug("[oauth] Expected localhost navigation error — checking capture")
@@ -233,9 +238,9 @@ async def acquire_tokens_via_browser(
 
         if captured:
             logger.info(f"[oauth] Code immediately captured — exchanging for tokens")
-            return await _exchange_code(captured[0], verifier, email, proxy)
+            return await _exchange_code(captured[0], verifier, email, proxy, _to)
 
-        # ── Handle Auth0 login page (session not recognized / account incomplete) ─
+        # ── Handle Auth0 login page ──────────────────────────────────────────
         await asyncio.sleep(2.0)
         current_url = page.url
         logger.debug(f"[oauth] Post-goto URL: {current_url}")
@@ -243,12 +248,11 @@ async def acquire_tokens_via_browser(
         if "log-in" in current_url or "/login" in current_url:
             logger.info(f"[oauth] Auth0 login page detected — filling credentials to re-authenticate")
 
-            # Step 1: Fill email
             email_result = await wait_any_element(
                 page,
                 ["input[type='email']", "input[name='email']", "input[name='username']",
                  "#username", "input[id*='email']"],
-                timeout_ms=8_000,
+                timeout_ms=int(_to.get("oauth_login_email", 8) * 1000),
             )
             if email_result:
                 e_sel, _ = email_result
@@ -258,12 +262,11 @@ async def acquire_tokens_via_browser(
                 await click_submit_or_text(page, ["Continue", "Next", "继续", "Submit"])
                 await asyncio.sleep(2.0)
 
-            # Step 2: Fill password (may appear on same or next page)
             if password:
                 pw_result = await wait_any_element(
                     page,
                     ["input[type='password']", "input[name='password']"],
-                    timeout_ms=10_000,
+                    timeout_ms=int(_to.get("oauth_login_password", 10) * 1000),
                 )
                 if pw_result:
                     p_sel, _ = pw_result
@@ -279,15 +282,14 @@ async def acquire_tokens_via_browser(
             else:
                 logger.warning("[oauth] No password provided — cannot log in via OAuth login page")
 
-        # ── Handle consent / about-you / workspace pages (iterative click-through) ─
+        # ── Handle consent / about-you / workspace pages ─────────────────────
         for attempt in range(1, 8):
             if captured:
                 logger.info(f"[oauth] Code captured (len={len(captured[0])}) — exchanging for tokens")
-                return await _exchange_code(captured[0], verifier, email, proxy)
+                return await _exchange_code(captured[0], verifier, email, proxy, _to)
 
             logger.info(f"[oauth] Attempting OAuth flow click-through (try {attempt})")
 
-            # When stuck on about-you, fill the profile form BEFORE clicking Continue
             if "about-you" in page.url:
                 fn = first_name or "James"
                 ln = last_name or "Smith"
@@ -296,33 +298,41 @@ async def acquire_tokens_via_browser(
                 await _fill_about_you_js(page, fn, ln, bd)
                 await asyncio.sleep(1.5)
 
-            # Wait for any of the flow selectors to appear
-            element = await wait_any_element(page, _FLOW_SELECTORS, timeout_ms=8_000)
+            element = await wait_any_element(
+                page, _FLOW_SELECTORS,
+                timeout_ms=int(_to.get("oauth_flow_element", 8) * 1000),
+            )
             if not element:
                 logger.warning(f"[oauth] No elements found for click-through (try {attempt}) at {page.url}")
                 continue
 
-            # Click the detected button — this should advance the OAuth flow
             matched_sel, btn = element
             logger.info(f"[oauth] Clicking flow button (sel={matched_sel!r}) at {page.url}")
             await human_move_and_click(page, btn)
 
-            # Wait briefly for potential redirects / URL changes
             await asyncio.sleep(3.0)
 
-            # Check if we captured the authorization code
             if captured:
                 logger.info(f"[oauth] Code captured (len={len(captured[0])}) — exchanging for tokens")
-                return await _exchange_code(captured[0], verifier, email, proxy)
+                return await _exchange_code(captured[0], verifier, email, proxy, _to)
 
+        logger.warning(f"[oauth] Failed to complete OAuth flow for {email} — code not captured")
+        return None
+
+    try:
+        result = await asyncio.wait_for(_run_flow(), timeout=_total)
+        return result
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"[oauth] OAuth flow timed out after {_total}s for {email}"
+        )
+        return None
     finally:
         try:
             await page.unroute("http://localhost:1455/**")
         except Exception:
             pass
 
-    logger.warning(f"[oauth] Failed to complete OAuth flow for {email} — code not captured")
-    return None
 
 
 # ── About-you profile fill helper ────────────────────────────────────────────
@@ -484,12 +494,14 @@ async def _exchange_code(
     verifier: str,
     email: str,
     proxy: Optional[str] = None,
+    timeouts: Optional[dict] = None,
 ) -> Optional[TokenResult]:
     """
     POST /oauth/token to exchange an authorization code for tokens.
 
     Uses httpx (async) with optional proxy support.
     """
+    _to = timeouts or {}
     body = urlencode({
         "grant_type":    "authorization_code",
         "code":          code,
@@ -499,7 +511,7 @@ async def _exchange_code(
     }).encode()
 
     # Build the AsyncClient kwargs; httpx >= 0.24 accepts proxy= directly.
-    client_kwargs: dict = {"timeout": 30.0}
+    client_kwargs: dict = {"timeout": _to.get("oauth_token_exchange", 30.0)}
     if proxy:
         client_kwargs["proxy"] = proxy
 
