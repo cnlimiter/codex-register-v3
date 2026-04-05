@@ -232,8 +232,13 @@ async def _register_async(
     # Strip optional ':index' suffix (e.g. "imap:0" → "imap") for config-dict lookup.
     provider_base = provider.split(":")[0]
     mail_cfg = (cfg.get("mail") or {}).get(provider_base, {})
-    api_key  = mail_cfg.get("api_key", "")
-    base_url = mail_cfg.get("base_url", "")
+    # IMAP config is a list of account dicts — it has no api_key/base_url.
+    if isinstance(mail_cfg, list):
+        api_key  = ""
+        base_url = ""
+    else:
+        api_key  = mail_cfg.get("api_key", "")
+        base_url = mail_cfg.get("base_url", "")
 
     try:
         mail_client = get_mail_client(provider, api_key=api_key, base_url=base_url)
