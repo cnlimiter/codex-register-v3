@@ -35,15 +35,16 @@ def get_mail_client(
     api_key  : API key for HTTP-based providers (gptmail / npcmail / yydsmail).
     base_url : Base URL for HTTP-based providers.
     cfg      : Full merged config dict (from settings_db.build_config()).
-               When provided, IMAP/Outlook accounts are read from here instead
-               of config.yaml.  Falls back to config.yaml when None.
+               Required for IMAP/Outlook providers because all runtime config
+               is now stored in SQLite.
     """
-    # Lazy-load config only if not supplied by caller.
     def _get_cfg() -> dict:
         if cfg is not None:
             return cfg
-        import src.config as _c
-        return _c.load()
+        raise ValueError(
+            "DB-backed config is required for this provider. "
+            "Load it with settings_db.build_config() first."
+        )
 
     match provider.lower():
         case "gptmail":

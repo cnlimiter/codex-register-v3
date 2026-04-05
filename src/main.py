@@ -15,10 +15,11 @@ db         init
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # ── Windows ProactorEventLoop ResourceWarning suppression ─────────────────
 # On Windows, when asyncio.run() closes the event loop, pending pipe transports
@@ -46,10 +47,10 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
-import src.config as cfg_mod
 import src.db as db_mod
 import src.accounts as accounts_mod
 import src.proxy_pool as proxy_pool_mod
+import src.settings_db as settings_db
 from src.mail import get_mail_client
 from src.browser.register import register_one
 
@@ -78,6 +79,78 @@ logger.add(
 
 def _ensure_db() -> None:
     _run(db_mod.init())
+
+
+_GENERAL_KEYS = {
+    "engine", "headless", "slow_mo", "mobile",
+    "max_concurrent", "mail_provider", "proxy_strategy", "proxy_static",
+}
+
+_SECTION_PREFIXES = [
+    "mail.gptmail",
+    "mail.npcmail",
+    "mail.yydsmail",
+    "mail.imap",
+    "mail.outlook",
+    "registration",
+    "team",
+    "sync",
+    "oauth",
+    "mouse",
+    "timeouts",
+    "timing",
+    "general",
+]
+
+
+def _coerce_value(value: str) -> Any:
+    lowered = value.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
+
+def _resolve_config_target(key: str) -> tuple[str, list[str]]:
+    if key == "enable_oauth":
+        return "oauth", ["enabled"]
+    if key in _GENERAL_KEYS:
+        return "general", [key]
+
+    for prefix in sorted(_SECTION_PREFIXES, key=len, reverse=True):
+        if key == prefix:
+            return prefix, []
+        if key.startswith(prefix + "."):
+            return prefix, key[len(prefix) + 1 :].split(".")
+
+    raise KeyError(f"Unsupported config key: {key}")
+
+
+def _nested_get(data: Any, key: str) -> Any:
+    cur = data
+    for part in key.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            raise KeyError(key)
+    return cur
+
+
+def _nested_set(data: dict[str, Any], parts: list[str], value: Any) -> dict[str, Any]:
+    cur = data
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+    return data
 
 
 # ── Commands ──────────────────────────────────────────────────────────────
@@ -173,15 +246,36 @@ def config_cmd(
     key: str    = typer.Argument("",  help="Dot-notation key, e.g. engine"),
     value: str  = typer.Argument("",  help="Value to set"),
 ) -> None:
-    """Get or set configuration values."""
+    """Get or set SQLite-backed configuration values."""
+    _ensure_db()
     if action == "set":
-        cfg_mod.set_key(key, value)
-        console.print(f"[green]Set {key} = {value!r}[/green]")
+        try:
+            section, parts = _resolve_config_target(key)
+        except KeyError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+
+        coerced = _coerce_value(value)
+        if parts:
+            current = _run(settings_db.get_section(section))
+            if not isinstance(current, dict):
+                console.print(f"[red]Section {section!r} is not a dict; set the whole section instead.[/red]")
+                raise typer.Exit(1)
+            updated = _nested_set(dict(current), parts, coerced)
+        else:
+            updated = coerced
+
+        _run(settings_db.set_section(section, updated))
+        console.print(f"[green]Set {key} = {coerced!r}[/green]")
     elif action == "get":
-        console.print(cfg_mod.get(key))
+        cfg = _run(settings_db.build_config())
+        try:
+            console.print(_nested_get(cfg, key))
+        except KeyError:
+            console.print(f"[red]Unknown config key: {key!r}[/red]")
+            raise typer.Exit(1)
     elif action == "show":
-        import json
-        console.print_json(json.dumps(cfg_mod.load(), indent=2))
+        console.print_json(json.dumps(_run(settings_db.build_config()), indent=2, ensure_ascii=False))
     else:
         console.print(f"[red]Unknown action {action!r}. Use: set | get | show[/red]")
 
@@ -218,7 +312,7 @@ async def _register_async(
     headed_override: bool = False,
     slow_mo_override: int = -1,
 ) -> None:
-    cfg = cfg_mod.load()
+    cfg = await settings_db.build_config()
 
     engine   = engine_override   or cfg.get("engine",        "playwright")
     provider = provider_override or cfg.get("mail_provider", "gptmail")
@@ -252,7 +346,7 @@ async def _register_async(
         base_url = mail_cfg.get("base_url", "")
 
     try:
-        mail_client = get_mail_client(provider, api_key=api_key, base_url=base_url)
+        mail_client = get_mail_client(provider, api_key=api_key, base_url=base_url, cfg=cfg)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)

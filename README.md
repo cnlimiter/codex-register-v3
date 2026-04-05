@@ -1,5 +1,9 @@
 # codex-register-v3
-
+<p align="center">
+  <a href="https://linux.do" target="_blank">
+    <img src="https://img.shields.io/badge/LINUX-DO-FFB003?style=for-the-badge&logo=linux&logoColor=white" alt="LINUX DO" />
+  </a>
+</p>
 ChatGPT 账号无头浏览器自动批量注册工具。
 
 支持双浏览器引擎（Playwright Chromium / Camoufox Firefox）、多种邮件服务（GPTMail / NPCmail / YYDS Mail / 通用 IMAP / Outlook）、代理池轮换，asyncio 并发执行，SQLite 持久化存储，注册完成后自动完成 Codex OAuth Token 换取。
@@ -10,7 +14,7 @@ ChatGPT 账号无头浏览器自动批量注册工具。
 
 | 功能 | 说明 |
 |------|------|
-| 双引擎 | Playwright (Chromium) 或 Camoufox (Firefox)，配置文件一键切换 |
+| 双引擎 | Playwright (Chromium) 或 Camoufox (Firefox)，可通过 WebUI 或 CLI 即时切换 |
 | 反检测 | Chromium 注入 13 点 stealth JS；Camoufox 内置指纹混淆 + GeoIP |
 | 手机指纹 | 顶层 `mobile: true` 即可全程使用手机端 UA / 视口 / 触控，注册与 OAuth 复用同一 session |
 | 多邮件后端 | GPTMail / NPCmail / YYDS Mail / **通用 IMAP** / **Outlook**，统一工厂接口 |
@@ -80,19 +84,13 @@ uv run python -m camoufox fetch   # 下载 GeoIP 数据库（约 65 MB）
 # 4. 初始化数据库
 uv run python -m src.main db init
 
-# 5. （可选）复制旧版 YAML 模板
-# 仅在你要做“首次迁移/兼容旧 CLI 配置”时需要；WebUI 配置主存储在 SQLite
-Copy-Item config.example.yaml config.yaml
 ```
 
 ---
 
 ## 配置
 
-当前代码库里有 **两套配置入口**，用途不同：
-
-1. **WebUI / FastAPI 路径**：配置保存在 SQLite `accounts.db` 的 `settings` 表，由 `src/settings_db.py` 管理。
-2. **CLI 兼容路径**：`src.main config ...` 目前仍通过 `src/config.py` 读写 `config.yaml`，主要用于旧流程兼容与首次迁移。
+当前项目的**唯一运行时配置源**是 SQLite `accounts.db` 中的 `settings` 表，由 `src/settings_db.py` 管理。
 
 ### 推荐用法
 
@@ -102,69 +100,28 @@ Copy-Item config.example.yaml config.yaml
 uv run python -m src.main webui
 ```
 
-- 首次打开 WebUI 时会调用 `settings_db.init_from_yaml()`：若数据库里还没有对应 section，会把 `config.yaml` 中的旧配置迁移进 SQLite。
-- 迁移完成后，**WebUI 运行时**以 SQLite 为主；`config.yaml` 更适合做兼容/导入模板，而不是长期唯一真源。
+- 也可以用 CLI 直接读写 SQLite 配置：
 
-### 完整配置示例
-
-```yaml
-# 说明：这是“旧版/兼容层 YAML 示例”。WebUI 实际运行时优先使用 SQLite settings。
-
-# 浏览器引擎: playwright | camoufox（推荐生产环境用 camoufox）
-engine: playwright
-headless: true      # true=无头批量 | false=有头可见窗口（调试）
-slow_mo: 0          # 操作间额外延迟ms; 0=自动（有头模式默认 80ms）
-mobile: false       # true=整个注册流程使用手机端指纹（UA/视口/触控）
-max_concurrent: 2
-
-# 邮件服务: gptmail | npcmail | yydsmail | imap | imap:0 | imap:1 …
-mail_provider: gptmail
-
-mail:
-  gptmail:
-    api_key: "gpt-test"           # 公共 key，有频率限制
-    base_url: "https://mail.chatgpt.org.uk"
-  npcmail:
-    api_key: ""
-    base_url: "https://dash.xphdfs.me"
-  yydsmail:
-    api_key: ""
-    base_url: "https://maliapi.215.im/v1"
-  imap:                           # 支持列表，配置多个账户
-    - email:    "user@gmail.com"
-      password: "app-password"    # Gmail 使用应用专用密码
-      host:     "imap.gmail.com"
-      port:     993               # 993=IMAPS(SSL) | 143=STARTTLS
-      ssl:      true
-      folder:   INBOX
-      # use_alias: true           # 不填则 qq.com/gmail.com 自动启用别名模式
-
-registration:
-  prefix: ""   # 邮箱前缀，留空随机生成
-  domain: ""   # 邮箱域名，留空由邮件服务决定
-
-proxy_strategy: none   # none | static | pool
-proxy_static: ""       # http://user:pass@host:port（strategy=static 时生效）
-
-# 鼠标移动模拟（减小值加速，增大值更像真人）
-mouse:
-  human_simulation: true
-  steps_min: 4
-  steps_max: 8
-  step_delay_min: 0.003
-  step_delay_max: 0.010
-  hover_min: 0.02
-  hover_max: 0.08
-
-# 各阶段超时（秒）
-timeouts:
-  page_load: 30
-  otp_code: 180        # 轮询邮箱验证码的最长等待时间
-
-oauth:
-  enabled: true        # true=注册后自动换取 Codex Token
-  timeout: 45
+```powershell
+uv run python -m src.main config show
+uv run python -m src.main config get engine
+uv run python -m src.main config set engine camoufox
+uv run python -m src.main config set timeouts.otp_code 240
 ```
+
+### 主要配置 section
+
+| Section | 内容 |
+|--------|------|
+| `general` | `engine` / `headless` / `slow_mo` / `mobile` / `max_concurrent` / `mail_provider` / `proxy_strategy` / `proxy_static` |
+| `mail.gptmail` / `mail.npcmail` / `mail.yydsmail` | API 邮箱配置 |
+| `mail.imap` / `mail.outlook` | 自有邮箱账号列表 |
+| `registration` | 邮箱前缀 / 域名 |
+| `oauth` | 是否启用 OAuth / OAuth 总超时 |
+| `mouse` | 人工轨迹点击配置 |
+| `timeouts` | 各阶段超时 |
+| `timing` | 页面动作节奏参数 |
+| `team` / `sync` | 预留的同步相关配置 |
 
 ### 配置字段速查
 
@@ -181,20 +138,7 @@ oauth:
 | `oauth.enabled` | `true` | 注册后自动换取 Codex Token |
 | `mouse.human_simulation` | `true` | `false` 时关键按钮退回直接点击，不走人工轨迹 |
 
-### SQLite 配置 section（WebUI 主路径）
-
-WebUI / API 目前维护的主要 section：
-
-- `general`：`engine` / `headless` / `slow_mo` / `mobile` / `max_concurrent` / `mail_provider` / `proxy_strategy` / `proxy_static`
-- `mail.gptmail` / `mail.npcmail` / `mail.yydsmail` / `mail.imap` / `mail.outlook`
-- `registration`
-- `oauth`
-- `mouse`
-- `timeouts`
-- `timing`
-- `team` / `sync`
-
-如果你是通过 WebUI 使用本项目，可以把 SQLite `settings` 视为主配置源。
+如果你是通过 WebUI 使用本项目，可以把 SQLite `settings` 直接视为唯一配置源。
 
 ---
 
@@ -214,25 +158,28 @@ WebUI / API 目前维护的主要 section：
 
 **启用方法：**
 
-```yaml
-mail_provider: imap    # 多账户时随机选取
-# mail_provider: imap:0  # 固定使用第 0 个账户
-# mail_provider: imap:1  # 固定使用第 1 个账户
+- 在 WebUI 中将 `general.mail_provider` 设为 `imap` / `imap:0` / `imap:1`
+- 在 `mail.imap` section 中配置账号列表，结构示例：
 
-mail:
-  imap:
-    - email:    "yourname@gmail.com"
-      password: "abcd efgh ijkl mnop"  # Google 应用专用密码（非登录密码）
-      host:     "imap.gmail.com"
-      port:     993
-      ssl:      true
-      folder:   INBOX
-    - email:    "123456@qq.com"
-      password: "xxxxxxxxxxxxxx"        # QQ 邮箱授权码（非登录密码）
-      host:     "imap.qq.com"
-      port:     993
-      ssl:      true
-      folder:   INBOX
+```json
+[
+  {
+    "email": "yourname@gmail.com",
+    "password": "abcd efgh ijkl mnop",
+    "host": "imap.gmail.com",
+    "port": 993,
+    "ssl": true,
+    "folder": "INBOX"
+  },
+  {
+    "email": "123456@qq.com",
+    "password": "xxxxxxxxxxxxxx",
+    "host": "imap.qq.com",
+    "port": 993,
+    "ssl": true,
+    "folder": "INBOX"
+  }
+]
 ```
 
 **别名模式（`+alias` 子地址）：**
@@ -297,26 +244,21 @@ Write-Host "refresh_token:" $token.refresh_token
 
 > 也可以使用 [msal-python](https://github.com/AzureAD/microsoft-authentication-library-for-python) 等工具完成设备码流程，或在 Web UI 中通过 **Settings → Outlook/Hotmail → 添加账户** 界面完成。
 
-#### 配置 config.yaml
+#### 配置 Outlook 账户
 
-```yaml
-mail_provider: outlook    # 多账户时轮询；hotmail 与 outlook 等价
-# mail_provider: outlook:0  # 固定使用第 0 个账户
-# mail_provider: outlook:1  # 固定使用第 1 个账户
+- 在 WebUI 中将 `general.mail_provider` 设为 `outlook` / `outlook:0` / `outlook:1`
+- 在 `mail.outlook` section 中配置账号列表，结构示例：
 
-mail:
-  outlook:
-    - email:         "yourname@outlook.com"   # 完整邮箱地址
-      client_id:     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Azure 应用 ID
-      tenant_id:     "consumers"              # 个人账户固定填 consumers
-      refresh_token: "0.AXXXXXXXXXXXXX..."    # 上一步获取的 refresh_token
-      fetch_method:  "graph"                  # graph（推荐）或 imap
-    # 第二个账户（可选，多账户轮询）:
-    # - email:         "another@hotmail.com"
-    #   client_id:     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    #   tenant_id:     "consumers"
-    #   refresh_token: "0.BXXXXXXXXXXXXX..."
-    #   fetch_method:  "graph"
+```json
+[
+  {
+    "email": "yourname@outlook.com",
+    "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "tenant_id": "consumers",
+    "refresh_token": "0.AXXXXXXXXXXXXX...",
+    "fetch_method": "graph"
+  }
+]
 ```
 
 > `fetch_method` 说明：
@@ -330,7 +272,7 @@ mail:
 uv run python -m src.main config set mail_provider outlook
 uv run python -m src.main register --count 3
 
-# 或者直接用 --provider 参数（不改配置文件）
+# 或者直接用 --provider 参数（不改当前 DB 配置）
 uv run python -m src.main register --count 3 --provider outlook
 
 # 固定使用第 0 个 Outlook 账户注册
@@ -358,7 +300,7 @@ uv run python -m src.main register --count 1 --provider outlook --headed
 # 注册 5 个账号
 uv run python -m src.main register --count 5
 
-# 指定引擎和邮件服务（覆盖配置文件）
+# 指定引擎和邮件服务（覆盖当前 DB 配置）
 uv run python -m src.main register --count 3 --engine camoufox --provider imap:0
 
 # 覆盖并发数
@@ -415,10 +357,10 @@ uv run python -m src.main config set proxy_strategy none
 
 > **代理优先级**：`--proxy` CLI 参数 > `proxy_strategy=static` > `proxy_strategy=pool` > `none`
 
-### 配置管理（旧 CLI 兼容路径）
+### 配置管理
 
 ```powershell
-# 查看/修改 config.yaml（兼容层）
+# 查看全部运行时配置（SQLite）
 uv run python -m src.main config show
 
 # 读取单项
@@ -433,8 +375,6 @@ uv run python -m src.main config set mobile true
 uv run python -m src.main config set timeouts.otp_code 240
 ```
 
-> 注意：以上 `config` 子命令当前仍操作 `config.yaml`。WebUI `/api/config` 与 `/api/settings` 走的是 SQLite `settings` 表。
-
 ### WebUI
 
 ```powershell
@@ -446,7 +386,6 @@ uv run python -m src.main webui
 WebUI 启动后会：
 
 - 初始化数据库
-- 按需把旧 `config.yaml` 配置迁移到 SQLite
 - 通过 FastAPI 提供配置、任务、账号、代理等接口
 - 使用 `webui_frontend/` 构建后的前端页面
 
@@ -474,8 +413,6 @@ socks5://user:pass@host:port
 
 ```
 codex-register-v3-single/
-├── config.yaml          # 旧版/兼容配置；可作为首次迁移来源
-├── config.example.yaml  # 旧版配置模板（迁移参考）
 ├── proxies.txt          # 代理列表
 ├── accounts.db          # SQLite 数据库
 ├── register.log         # 调试日志（10 MB 自动轮转，保留 7 天）
@@ -485,26 +422,26 @@ codex-register-v3-single/
 │   └── browser/
 │       └── tool.js      # 原始 JS 用户脚本（注册状态机逆向来源）
 ├── src/
-    ├── main.py          # CLI 入口（typer）
-    ├── config.py        # YAML 兼容层（首次迁移源 + 旧 CLI config 命令）
-    ├── settings_db.py   # WebUI/运行时配置的 SQLite 存储层
-    ├── db.py            # SQLite schema 初始化
-    ├── accounts.py      # 账号 CRUD / 导入导出
-    ├── proxy_pool.py    # 代理池（轮询 + 失败计数自动禁用）
-    ├── browser/
-    │   ├── engine.py    # 浏览器工厂（playwright / camoufox，含手机指纹）
-    │   ├── helpers.py   # DOM 工具（React input 填充、人工鼠标移动等）
-    │   ├── register.py  # 7 步注册状态机
-    │   └── oauth.py     # Codex PKCE OAuth2 Token 换取（含 OTP 重试 / callback URL 补抓取）
-    ├── webui/
-    │   └── server.py    # FastAPI WebUI 后端
-    └── mail/
-        ├── base.py      # 抽象基类 MailClient
-        ├── gptmail.py   # GPTMail 客户端
-        ├── npcmail.py   # NPCmail 客户端
-        ├── yydsmail.py  # YYDS Mail 客户端
-        ├── imap.py      # 通用 IMAP 客户端（含多账户/别名）
-        └── outlook.py   # Outlook / Hotmail 客户端
+│   ├── main.py          # CLI 入口（typer）
+│   ├── config.py        # SQLite 兼容层（保留 load/get/set_key 旧接口）
+│   ├── settings_db.py   # WebUI/运行时配置的 SQLite 存储层
+│   ├── db.py            # SQLite schema 初始化
+│   ├── accounts.py      # 账号 CRUD / 导入导出
+│   ├── proxy_pool.py    # 代理池（轮询 + 失败计数自动禁用）
+│   ├── browser/
+│   │   ├── engine.py    # 浏览器工厂（playwright / camoufox，含手机指纹）
+│   │   ├── helpers.py   # DOM 工具（React input 填充、人工鼠标移动等）
+│   │   ├── register.py  # 7 步注册状态机
+│   │   └── oauth.py     # Codex PKCE OAuth2 Token 换取（含 OTP 重试 / callback URL 补抓取）
+│   ├── webui/
+│   │   └── server.py    # FastAPI WebUI 后端
+│   └── mail/
+│       ├── base.py      # 抽象基类 MailClient
+│       ├── gptmail.py   # GPTMail 客户端
+│       ├── npcmail.py   # NPCmail 客户端
+│       ├── yydsmail.py  # YYDS Mail 客户端
+│       ├── imap.py      # 通用 IMAP 客户端（含多账户/别名）
+│       └── outlook.py   # Outlook / Hotmail 客户端
 └── webui_frontend/
     ├── package.json     # React + Vite 前端
     └── src/
@@ -533,7 +470,7 @@ uv run python -m src.mail.gptmail YOUR_API_KEY
 
 ## 超时配置参考
 
-所有超时单位为**秒**。WebUI 路径下这些值主要保存在 SQLite `settings.timeouts` section；旧 CLI 兼容路径仍可通过 `config.yaml` 表达：
+所有超时单位为**秒**，保存在 SQLite `settings.timeouts` section：
 
 | 键 | 默认值 | 阶段 |
 |----|--------|------|
@@ -574,7 +511,6 @@ uv run python -m src.main config set timeouts.otp_code 240
 | `loguru` | 结构化日志 |
 | `typer` | CLI 框架 |
 | `rich` | 终端美化输出 |
-| `pyyaml` | YAML 配置文件解析 |
 
 ---
 

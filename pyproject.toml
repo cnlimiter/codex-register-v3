@@ -12,7 +12,6 @@ dependencies = [
     "loguru>=0.7.2",
     "typer>=0.12.0",
     "rich>=13.7.0",
-    "pyyaml>=6.0.0",
     "aioimaplib>=2.0.1",
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",

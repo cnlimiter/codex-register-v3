@@ -237,8 +237,9 @@ async def register_one(
         slow_mo = 80
 
     # ── Backward-compat: merge legacy 'timeout' (singular) keys into 'timeouts' ──
-    # config.yaml used to have `timeout:` (singular); code reads `timeouts:` (plural).
-    # Map the known keys so existing configs keep working.
+    # Older config shapes may still expose `timeout:` (singular); runtime reads
+    # `timeouts:` (plural). Map the known keys so existing persisted settings
+    # keep working.
     _legacy = cfg.get("timeout", {})
     if _legacy:
         _KEY_MAP = {

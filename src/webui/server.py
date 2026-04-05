@@ -18,7 +18,6 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-import src.config as cfg_mod
 import src.db as db_mod
 import src.accounts as accounts_mod
 import src.proxy_pool as proxy_pool_mod
@@ -36,7 +35,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db_mod.init()
-    await settings_db.init_from_yaml()
+    await settings_db.init()
     yield
 
 
@@ -275,7 +274,7 @@ async def api_set_settings_section(section: str, request: Request):
 
 @app.get("/api/settings_merged")
 async def api_settings_merged():
-    """Return fully merged config (YAML + DB) as used by registration jobs."""
+    """Return the fully merged SQLite-backed runtime config."""
     return await settings_db.build_config()
 
 

@@ -10,7 +10,7 @@ directly to any standard IMAP server using the account's own credentials.
     ``To:`` / ``Delivered-To:`` headers so concurrent registrations sharing one
     mailbox receive the right code.
 
-Configuration in config.yaml:
+Configuration in SQLite settings:
     mail_provider: imap
     mail:
       imap:
@@ -380,10 +380,10 @@ class MultiIMAPMailClient(MailClient):
 
 if __name__ == "__main__":
     import sys
-    import src.config as cfg_mod
+    import src.settings_db as settings_db
 
     async def _main() -> None:
-        cfg      = cfg_mod.load()
+        cfg      = await settings_db.build_config()
         imap_raw = (cfg.get("mail") or {}).get("imap", [])
 
         # Backward compat: single dict in config
@@ -393,14 +393,8 @@ if __name__ == "__main__":
         valid = [c for c in imap_raw if c.get("email")]
         if not valid:
             print(
-                "Configure mail.imap in config.yaml first:\n"
-                "  mail:\n"
-                "    imap:\n"
-                "      - email:    user@gmail.com\n"
-                "        password: app-password\n"
-                "        host:     imap.gmail.com\n"
-                "        port:     993\n"
-                "        ssl:      true\n"
+                "No IMAP accounts found in SQLite settings.\n"
+                "Open the WebUI and add entries under Settings → IMAP 账户 first.\n"
             )
             sys.exit(1)
 

@@ -14,8 +14,17 @@ from loguru import logger
 from typing import Literal
 from playwright.async_api import Page, Locator, TimeoutError as PWTimeoutError
 
-import src.config as _cfg_mod
 import src.settings_db as _settings_db
+
+_MOUSE_DEFAULTS = {
+    "human_simulation": True,
+    "steps_min": 4,
+    "steps_max": 8,
+    "step_delay_min": 0.003,
+    "step_delay_max": 0.010,
+    "hover_min": 0.02,
+    "hover_max": 0.08,
+}
 
 # ── React-compatible input fill ───────────────────────────────────────────
 
@@ -369,7 +378,7 @@ async def human_move_and_click(page: Page, locator: Locator) -> None:
     playwright .click() with no prior movement is a strong bot signal.
 
     Configuration is read from the DB ``mouse`` section (set via the WebUI
-    advanced page).  Falls back to YAML defaults if the DB is unavailable.
+    advanced page).  If the DB is unavailable, built-in defaults are used.
 
         mouse:
           human_simulation: true   # false → plain locator.click() (faster)
@@ -384,7 +393,7 @@ async def human_move_and_click(page: Page, locator: Locator) -> None:
     try:
         _mc = await _settings_db.get_section("mouse") or {}
     except Exception:
-        _mc = _cfg_mod.get("mouse") or {}
+        _mc = dict(_MOUSE_DEFAULTS)
 
     # ── Fast path: human simulation disabled → direct click ───────────────────
     if not _mc.get("human_simulation", True):

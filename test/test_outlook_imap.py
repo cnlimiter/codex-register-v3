@@ -63,7 +63,7 @@ def _detect_proxy() -> str | None:
 async def _load_outlook_accounts() -> list[dict]:
     import src.settings_db as sdb
     try:
-        await sdb._ensure_table()
+        await sdb.init()
         data = await sdb.get_section("mail.outlook")
         if isinstance(data, list) and data:
             return data
@@ -71,14 +71,7 @@ async def _load_outlook_accounts() -> list[dict]:
             return [data]
     except Exception as e:
         print(_warn(f"DB 读取失败: {e}"))
-    try:
-        import src.config as cfg_mod
-        cfg = cfg_mod.load()
-        accs = (cfg.get("mail") or {}).get("outlook", [])
-        return [accs] if isinstance(accs, dict) else (accs or [])
-    except Exception as e:
-        print(_fail(f"config.yaml 读取失败: {e}"))
-        return []
+    return []
 
 
 async def _token_req(client_id: str, tenant: str, refresh_tok: str, scope: str) -> dict:
