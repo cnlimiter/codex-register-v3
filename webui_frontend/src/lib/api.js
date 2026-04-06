@@ -16,6 +16,25 @@ async function req(method, path, body) {
   return res.json()
 }
 
+/** POST that returns a Blob (for file downloads via fetch). */
+async function reqBlob(path, body) {
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let msg = `${res.status}`
+    try { msg = (await res.json()).detail || msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const cd = res.headers.get('Content-Disposition') || ''
+  const match = cd.match(/filename=([^;]+)/)
+  const filename = match ? match[1].replace(/"/g, '') : 'export'
+  return { blob, filename }
+}
+
 const api = {
   // ── Common config (YAML-backed) ─────────────────────────────────────
   getConfig:  ()       => req('GET',  '/config'),
@@ -40,6 +59,27 @@ const api = {
   exportUrl:          (fmt)         => `${BASE}/accounts/export?fmt=${fmt}`,
   deleteAccount:      (email)       => req('DELETE', `/accounts/${encodeURIComponent(email)}`),
   batchDeleteAccounts:(body)        => req('POST',   '/accounts/batch-delete', body),
+
+  /** Export selected accounts and trigger browser download. */
+  exportSelected: async (body) => {
+    const { blob, filename } = await reqBlob('/accounts/export-selected', body)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+
+  // ── Upload to platforms ──────────────────────────────────────────────
+  uploadNewapi:        (body) => req('POST', '/accounts/upload/newapi',  body),
+  uploadCpa:           (body) => req('POST', '/accounts/upload/cpa',     body),
+  uploadSub2api:       (body) => req('POST', '/accounts/upload/sub2api', body),
+  testUploadConn:      (body) => req('POST', '/accounts/upload/test',    body),
+  /** Upload to multiple configured endpoints at once. */
+  batchUpload:         (body) => req('POST', '/accounts/upload/batch',   body),
 
   // ── Jobs ─────────────────────────────────────────────────────────────
   getJobs:         ()     => req('GET',    '/jobs'),

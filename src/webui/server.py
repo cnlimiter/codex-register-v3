@@ -22,6 +22,7 @@ import src.db as db_mod
 import src.accounts as accounts_mod
 import src.proxy_pool as proxy_pool_mod
 import src.settings_db as settings_db
+import src.upload as upload_mod
 from src.mail import get_mail_client
 from src.mail.imap import IMAPMailClient
 from src.mail.outlook import OutlookMailClient
@@ -526,6 +527,188 @@ async def api_export(fmt: str = "json"):
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=accounts.json"},
     )
+
+
+@app.post("/api/accounts/export-selected")
+async def api_export_selected(request: Request):
+    """Export a filtered subset of accounts as CSV or JSON (blob download via fetch)."""
+    import io, csv as csv_mod
+    body = await request.json()
+    emails: list = body.get("emails", [])
+    select_all: bool = body.get("select_all", False)
+    status_filter: str = body.get("status", "")
+    fmt: str = body.get("fmt", "json")
+
+    if select_all:
+        rows = await accounts_mod.list_all(status_filter or None)
+    else:
+        all_rows = await accounts_mod.list_all()
+        email_set = set(emails)
+        rows = [r for r in all_rows if r.get("email") in email_set]
+
+    # Strip internal _raw key
+    clean = [{k: v for k, v in r.items() if k != "_raw"} for r in rows]
+
+    if fmt == "csv":
+        fieldnames = [
+            "email", "password", "status", "first_name", "last_name",
+            "provider", "proxy", "created_at", "account_id",
+            "access_token", "refresh_token",
+        ]
+        buf = io.StringIO()
+        w = csv_mod.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows({k: r.get(k, "") for k in fieldnames} for r in clean)
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=accounts_selected.csv"},
+        )
+
+    return Response(
+        content=json.dumps(clean, ensure_ascii=False, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=accounts_selected.json"},
+    )
+
+
+# ── Upload API ────────────────────────────────────────────────────────────────
+
+@app.post("/api/accounts/upload/newapi")
+async def api_upload_newapi(request: Request):
+    """Batch upload accounts to NewAPI channel manager."""
+    body = await request.json()
+    api_url = (body.get("api_url") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    if not api_url:
+        raise HTTPException(400, "api_url is required")
+    if not api_key:
+        raise HTTPException(400, "api_key is required")
+    return await upload_mod.batch_upload_newapi(
+        emails=body.get("emails", []),
+        api_url=api_url,
+        api_key=api_key,
+        channel_type=int(body.get("channel_type") or 1),
+        channel_base_url=body.get("channel_base_url") or "",
+        channel_models=body.get("channel_models") or "",
+        select_all=bool(body.get("select_all", False)),
+        status_filter=body.get("status") or "",
+    )
+
+
+@app.post("/api/accounts/upload/cpa")
+async def api_upload_cpa(request: Request):
+    """Batch upload accounts to CPA (Codex Protocol API)."""
+    body = await request.json()
+    api_url = (body.get("api_url") or "").strip()
+    api_token = (body.get("api_token") or "").strip()
+    if not api_url:
+        raise HTTPException(400, "api_url is required")
+    if not api_token:
+        raise HTTPException(400, "api_token is required")
+    return await upload_mod.batch_upload_cpa(
+        emails=body.get("emails", []),
+        api_url=api_url,
+        api_token=api_token,
+        select_all=bool(body.get("select_all", False)),
+        status_filter=body.get("status") or "",
+    )
+
+
+@app.post("/api/accounts/upload/sub2api")
+async def api_upload_sub2api(request: Request):
+    """Batch upload accounts to Sub2API platform."""
+    body = await request.json()
+    api_url = (body.get("api_url") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    if not api_url:
+        raise HTTPException(400, "api_url is required")
+    if not api_key:
+        raise HTTPException(400, "api_key is required")
+    return await upload_mod.batch_upload_sub2api(
+        emails=body.get("emails", []),
+        api_url=api_url,
+        api_key=api_key,
+        concurrency=int(body.get("concurrency") or 3),
+        priority=int(body.get("priority") or 50),
+        select_all=bool(body.get("select_all", False)),
+        status_filter=body.get("status") or "",
+    )
+
+
+@app.post("/api/accounts/upload/test")
+async def api_upload_test_connection(request: Request):
+    """Test connectivity to an upload platform."""
+    body = await request.json()
+    platform = body.get("platform", "newapi")
+    api_url = (body.get("api_url") or "").strip()
+
+    if platform == "newapi":
+        api_key = (body.get("api_key") or "").strip()
+        ok, msg = await upload_mod.test_newapi_connection(api_url, api_key)
+    elif platform == "cpa":
+        api_token = (body.get("api_token") or "").strip()
+        ok, msg = await upload_mod.test_cpa_connection(api_url, api_token)
+    elif platform == "sub2api":
+        api_key = (body.get("api_key") or "").strip()
+        ok, msg = await upload_mod.test_sub2api_connection(api_url, api_key)
+    else:
+        raise HTTPException(400, f"Unknown platform: {platform}")
+
+    return {"ok": ok, "message": msg}
+
+
+@app.post("/api/accounts/upload/batch")
+async def api_upload_batch(request: Request):
+    """Upload accounts to multiple configured endpoint targets in parallel."""
+    body = await request.json()
+    emails: list = body.get("emails", [])
+    select_all: bool = bool(body.get("select_all", False))
+    status_filter: str = body.get("status", "")
+    targets: list = body.get("targets", [])  # [{platform, index}, ...]
+
+    async def _run_target(target: dict) -> dict:
+        platform = target.get("platform", "")
+        index = int(target.get("index", 0))
+        base = {"platform": platform, "index": index,
+                "success_count": 0, "failed_count": 0, "skipped_count": 0, "details": []}
+        try:
+            configs = await settings_db.get_section(f"upload.{platform}")
+            if not isinstance(configs, list) or index >= len(configs):
+                return {**base, "name": f"{platform}#{index+1}", "error": "配置不存在"}
+            cfg = configs[index]
+            name = cfg.get("name") or f"{platform} #{index+1}"
+            if platform == "newapi":
+                r = await upload_mod.batch_upload_newapi(
+                    emails=emails, api_url=cfg.get("api_url", ""),
+                    api_key=cfg.get("api_key", ""),
+                    channel_type=int(cfg.get("channel_type") or 1),
+                    channel_base_url=cfg.get("channel_base_url", ""),
+                    channel_models=cfg.get("channel_models", ""),
+                    select_all=select_all, status_filter=status_filter,
+                )
+            elif platform == "cpa":
+                r = await upload_mod.batch_upload_cpa(
+                    emails=emails, api_url=cfg.get("api_url", ""),
+                    api_token=cfg.get("api_token", ""),
+                    select_all=select_all, status_filter=status_filter,
+                )
+            elif platform == "sub2api":
+                r = await upload_mod.batch_upload_sub2api(
+                    emails=emails, api_url=cfg.get("api_url", ""),
+                    api_key=cfg.get("api_key", ""),
+                    concurrency=int(cfg.get("concurrency") or 3),
+                    priority=int(cfg.get("priority") or 50),
+                    select_all=select_all, status_filter=status_filter,
+                )
+            else:
+                return {**base, "name": platform, "error": f"未知平台: {platform}"}
+            return {"platform": platform, "index": index, "name": name, **r}
+        except Exception as e:
+            return {**base, "name": f"{platform}#{index+1}", "error": str(e)}
+
+    results = await asyncio.gather(*[_run_target(t) for t in targets])
+    return {"targets": list(results)}
 
 
 # ── Jobs API ──────────────────────────────────────────────────────────────

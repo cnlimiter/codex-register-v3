@@ -27,6 +27,9 @@ _SECTIONS = [
     "mouse",
     "timeouts",
     "timing",
+    "upload.newapi",   # list of NewAPI endpoint configs
+    "upload.cpa",      # list of CPA endpoint configs
+    "upload.sub2api",  # list of Sub2API endpoint configs
 ]
 
 _DEFAULTS: dict[str, Any] = {
@@ -81,6 +84,9 @@ _DEFAULTS: dict[str, Any] = {
         "post_click":    1.5,
         "post_complete": 1.0,
     },
+    "upload.newapi":  [],
+    "upload.cpa":     [],
+    "upload.sub2api": [],
 }
 
 

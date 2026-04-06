@@ -1194,6 +1194,207 @@ function TabAdvanced() {
   )
 }
 
+// ── Tab: Upload Config ────────────────────────────────────────────────────
+
+const UPLOAD_PLATFORM_DEFS = {
+  newapi: {
+    label: 'NewAPI', icon: '🔌',
+    credentialKey: 'api_key', credentialLabel: 'API Key', credentialPlaceholder: 'sk-...',
+    urlPlaceholder: 'https://your-newapi-host',
+    defaultConfig: { name: '', api_url: '', api_key: '', channel_type: 1, channel_models: '', channel_base_url: '' },
+    extraFields: [
+      { key: 'channel_type',     label: 'Channel Type', type: 'number', placeholder: '1' },
+      { key: 'channel_base_url', label: 'Base URL',     type: 'text',   placeholder: '留空则使用默认' },
+      { key: 'channel_models',   label: 'Models',       type: 'textarea',placeholder: '留空则使用默认模型列表，逗号分隔' },
+    ],
+  },
+  cpa: {
+    label: 'CPA', icon: '🛡️',
+    credentialKey: 'api_token', credentialLabel: 'API Token', credentialPlaceholder: 'Bearer Token...',
+    urlPlaceholder: 'https://your-cpa-host',
+    defaultConfig: { name: '', api_url: '', api_token: '' },
+    extraFields: [],
+  },
+  sub2api: {
+    label: 'Sub2API', icon: '🚀',
+    credentialKey: 'api_key', credentialLabel: 'API Key', credentialPlaceholder: 'Admin API Key',
+    urlPlaceholder: 'https://your-sub2api-host',
+    defaultConfig: { name: '', api_url: '', api_key: '', concurrency: 3, priority: 50 },
+    extraFields: [
+      { key: 'concurrency', label: '并发数',  type: 'number', placeholder: '3' },
+      { key: 'priority',    label: '优先级',  type: 'number', placeholder: '50' },
+    ],
+  },
+}
+
+function UploadEndpointCard({ platform, cfg, onChange, onDelete }) {
+  const def = UPLOAD_PLATFORM_DEFS[platform]
+  const [expanded,   setExpanded]   = useState(!cfg.api_url)
+  const [testing,    setTesting]    = useState(false)
+  const [testResult, setTestResult] = useState(null)
+
+  const set = (k, v) => onChange({ ...cfg, [k]: v })
+
+  const handleTest = async () => {
+    setTesting(true); setTestResult(null)
+    try {
+      const body = { platform, api_url: cfg.api_url, [def.credentialKey]: cfg[def.credentialKey] }
+      const r = await api.testUploadConn(body)
+      setTestResult(r)
+    } catch (e) { setTestResult({ ok: false, message: e.message }) }
+    finally { setTesting(false) }
+  }
+
+  const credValue = cfg[def.credentialKey] || ''
+  const canTest   = !!(cfg.api_url && credValue)
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
+      {/* Card header */}
+      <div className="bg-gray-50 px-4 py-2.5 flex items-center gap-2">
+        <button onClick={() => setExpanded(v => !v)} className="text-gray-400 hover:text-gray-600 text-xs flex-shrink-0">
+          {expanded ? '▼' : '▶'}
+        </button>
+        <span className="text-base flex-shrink-0">{def.icon}</span>
+        <input
+          value={cfg.name || ''}
+          onChange={e => set('name', e.target.value)}
+          placeholder={`${def.label} 配置名称`}
+          className="flex-1 min-w-0 text-sm font-medium text-gray-700 bg-transparent border-0 outline-none focus:bg-white focus:border focus:border-gray-200 focus:rounded px-1"
+        />
+        {cfg.api_url && (
+          <span className="text-xs text-gray-400 truncate max-w-[180px] hidden sm:block">{cfg.api_url}</span>
+        )}
+        <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 ml-2 flex-shrink-0">删除</button>
+      </div>
+
+      {expanded && (
+        <div className="p-4 space-y-0">
+          <Field label="API URL">
+            <Input value={cfg.api_url || ''} onChange={e => set('api_url', e.target.value)} placeholder={def.urlPlaceholder} />
+          </Field>
+          <Field label={def.credentialLabel}>
+            <Input type="password" value={credValue} onChange={e => set(def.credentialKey, e.target.value)} placeholder={def.credentialPlaceholder} />
+          </Field>
+          {def.extraFields.map(f => (
+            <Field key={f.key} label={f.label}>
+              {f.type === 'textarea' ? (
+                <textarea
+                  value={cfg[f.key] || ''}
+                  onChange={e => set(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                  rows={2}
+                  className="block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              ) : (
+                <Input type={f.type} value={cfg[f.key] ?? ''} onChange={e => set(f.key, f.type === 'number' ? +e.target.value : e.target.value)} placeholder={f.placeholder} />
+              )}
+            </Field>
+          ))}
+          {/* Test row */}
+          <div className="flex items-center gap-3 pt-3 border-t border-gray-50 mt-1">
+            <button
+              onClick={handleTest}
+              disabled={testing || !canTest}
+              className="text-xs border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {testing ? '测试中…' : '🔍 测试连接'}
+            </button>
+            {testResult && (
+              <span className={`text-xs font-medium ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>
+                {testResult.ok ? '✓' : '✗'} {testResult.message}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UploadPlatformSection({ platform, configs, onChange }) {
+  const def = UPLOAD_PLATFORM_DEFS[platform]
+  const add    = () => onChange([...configs, { ...def.defaultConfig }])
+  const update = (i, v) => onChange(configs.map((c, j) => j === i ? v : c))
+  const remove = (i) => onChange(configs.filter((_, j) => j !== i))
+  return (
+    <Section title={`${def.icon} ${def.label}`} desc={`可配置多个 ${def.label} 上传端点，账号管理页可多选上传`}>
+      {configs.length === 0 && (
+        <p className="text-sm text-gray-400 text-center py-2">暂无配置，点击下方按钮添加</p>
+      )}
+      {configs.map((cfg, i) => (
+        <UploadEndpointCard
+          key={i}
+          platform={platform}
+          cfg={cfg}
+          onChange={v => update(i, v)}
+          onDelete={() => remove(i)}
+        />
+      ))}
+      <button
+        onClick={add}
+        className="w-full border-2 border-dashed border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500 rounded-xl py-2.5 text-sm transition-colors"
+      >
+        + 添加 {def.label} 端点
+      </button>
+    </Section>
+  )
+}
+
+function TabUploadConfig() {
+  const [configs, setConfigs] = useState({ newapi: [], cpa: [], sub2api: [] })
+  const { run, registerSave } = useSave()
+
+  useEffect(() => {
+    Promise.all([
+      api.getSection('upload.newapi'),
+      api.getSection('upload.cpa'),
+      api.getSection('upload.sub2api'),
+    ]).then(([newapi, cpa, sub2api]) => {
+      setConfigs({
+        newapi:  Array.isArray(newapi)  ? newapi  : [],
+        cpa:     Array.isArray(cpa)     ? cpa     : [],
+        sub2api: Array.isArray(sub2api) ? sub2api : [],
+      })
+    }).catch(() => {})
+  }, [])
+
+  const save = useCallback(() => run(async () => {
+    await Promise.all([
+      api.saveSection('upload.newapi',  configs.newapi),
+      api.saveSection('upload.cpa',     configs.cpa),
+      api.saveSection('upload.sub2api', configs.sub2api),
+    ])
+  }), [run, configs])
+
+  useEffect(() => { registerSave(save) }, [save, registerSave])
+
+  const total = configs.newapi.length + configs.cpa.length + configs.sub2api.length
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-xs text-blue-800 space-y-1">
+        <p className="font-semibold">📤 上传平台配置说明</p>
+        <p>· 每个平台可配置多个端点（多个网址），在账号管理页上传时可跨平台多选</p>
+        <p>· 配置名称用于在账号管理的上传弹窗中识别端点</p>
+        <p>· 使用「测试连接」验证 URL 和 Key 是否正确后再保存</p>
+      </div>
+      <p className="text-sm text-gray-500">
+        共配置 <span className="font-semibold text-blue-600">{total}</span> 个端点
+        <span className="ml-2 text-xs text-gray-400">（NewAPI: {configs.newapi.length}，CPA: {configs.cpa.length}，Sub2API: {configs.sub2api.length}）</span>
+      </p>
+      {['newapi', 'cpa', 'sub2api'].map(p => (
+        <UploadPlatformSection
+          key={p}
+          platform={p}
+          configs={configs[p]}
+          onChange={updated => setConfigs(c => ({ ...c, [p]: updated }))}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ── Main Settings page ─────────────────────────────────────────────────────
 
 const TABS = [
@@ -1203,10 +1404,11 @@ const TABS = [
   { key: 'outlook',   label: '🔵 Outlook' },
   { key: 'timeouts',  label: '⏱ 超时设置' },
   { key: 'advanced',  label: '🔧 高级设置' },
+  { key: 'upload',    label: '📤 上传配置' },
 ]
 
 // Mail tab has per-section save buttons, so no global save button shown
-const TABS_WITH_GLOBAL_SAVE = new Set(['general', 'imap', 'outlook', 'timeouts', 'advanced'])
+const TABS_WITH_GLOBAL_SAVE = new Set(['general', 'imap', 'outlook', 'timeouts', 'advanced', 'upload'])
 
 export function Settings() {
   const [tab, setTab] = useState('general')
@@ -1280,6 +1482,7 @@ export function Settings() {
           {tab === 'outlook'  && <TabOutlook />}
           {tab === 'timeouts' && <TabTimeouts />}
           {tab === 'advanced' && <TabAdvanced />}
+          {tab === 'upload'   && <TabUploadConfig />}
         </div>
       </div>
     </SaveCtx.Provider>
